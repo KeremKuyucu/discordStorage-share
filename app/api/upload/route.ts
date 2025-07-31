@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
-    const discordMessage = await uploadFileToDiscord(buffer, file.name)
+    const discordMessage = await uploadFileToDiscord(file, file.name)
 
     return NextResponse.json({
       message: "Dosya başarıyla yüklendi.",
