@@ -1,22 +1,4 @@
 import { CHUNK_SIZE } from "./constants"
-import { sha256 } from "js-sha256"
-
-export function calculateFileHash(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const buffer = event.target?.result as ArrayBuffer
-      const hash = sha256.arrayBuffer(buffer)
-      resolve(
-        Array.from(new Uint8Array(hash))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join(""),
-      )
-    }
-    reader.onerror = (error) => reject(error)
-    reader.readAsArrayBuffer(file)
-  })
-}
 
 export function splitFileIntoChunks(file: File): Blob[] {
   const chunks: Blob[] = []
