@@ -12,6 +12,7 @@ export async function GET(request: NextRequest, { params }: { params: { messageI
   try {
     // İlk olarak, ana mesajı (meta veri mesajını) Discord'dan alın
     const metadataMessage = await getDiscordMessage(messageId)
+    console.log("Metadata Text:", metadataMessage)
 
     if (!metadataMessage || metadataMessage.attachments.length === 0) {
       return NextResponse.json({ error: "Meta veri mesajı bulunamadı veya ekleri yok." }, { status: 404 })
