@@ -10,7 +10,7 @@ import { Check, Copy } from "lucide-react"
 
 export default function Component() {
   const params = useParams()
-  const { messageId } = params
+  const messageId = params.messageid as string | undefined
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
