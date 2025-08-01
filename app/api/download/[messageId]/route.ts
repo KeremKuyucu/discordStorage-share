@@ -1,55 +1,154 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getDiscordMessage, downloadFileFromDiscord } from "@/lib/discord"
-import { combineFileChunks } from "@/lib/file-utils"
+
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN
+const DISCORD_CHANNEL_ID = "1400517269670330507" // Fixed channel ID
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const retryWithDelay = async <T,>(fn: () => Promise<T>, maxRetries = 3, delay = 1000): Promise<T> => {
+  let lastError: Error
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error as Error
+      if (attempt === maxRetries) {
+        throw lastError
+      }
+      console.warn(`Discord API attempt ${attempt} failed, retrying in ${delay}ms...`, error)
+      await sleep(delay)
+    }
+  }
+
+  throw lastError!
+}
 
 export async function GET(request: NextRequest, { params }: { params: { messageId: string } }) {
-  const { messageId } = params
-
-  if (!messageId) {
-    return NextResponse.json({ error: "Mesaj kimliği eksik." }, { status: 400 })
+  // CORS headers ekle
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Content-Type": "application/json",
   }
 
   try {
-    // İlk olarak, ana mesajı (meta veri mesajını) Discord'dan alın
-    const metadataMessage = await getDiscordMessage(messageId)
-    console.log("Metadata Text:", metadataMessage)
+    const { messageId } = params
 
-    if (!metadataMessage || metadataMessage.attachments.length === 0) {
-      return NextResponse.json({ error: "Meta veri mesajı bulunamadı veya ekleri yok." }, { status: 404 })
+    if (!DISCORD_BOT_TOKEN) {
+      console.error("DISCORD_BOT_TOKEN environment variable is not configured")
+      return NextResponse.json(
+        {
+          error: "Discord bot token not configured. Please set the DISCORD_BOT_TOKEN environment variable.",
+        },
+        { status: 500, headers },
+      )
     }
 
-    // Meta veri dosyasını indirin ve içeriğini okuyun
-    const metadataAttachment = metadataMessage.attachments[0]
-    const metadataResponse = await downloadFileFromDiscord(metadataAttachment.url)
-    const metadataText = await metadataResponse.text()
-    const fileInfo = JSON.parse(metadataText)
-
-    const { originalFileName, originalFileType, partMessages } = fileInfo
-
-    if (!originalFileName || !originalFileType || !partMessages || !Array.isArray(partMessages)) {
-      return NextResponse.json({ error: "Geçersiz dosya meta verileri." }, { status: 400 })
+    if (!messageId) {
+      return NextResponse.json({ error: "Message ID is required" }, { status: 400, headers })
     }
 
-    // Parçaların URL'lerini toplayın
-    const chunkUrls = partMessages.sort((a: any, b: any) => a.partIndex - b.partIndex).map((p: any) => p.attachmentUrl)
+    console.log(`Fetching Discord message ${messageId} from channel ${DISCORD_CHANNEL_ID}`)
 
-    // Parçaları birleştirin
-    const combinedBlob = await combineFileChunks(chunkUrls, originalFileName, originalFileType)
+    // Fetch message from Discord API with retry logic
+    const discordResponse = await retryWithDelay(async () => {
+      const response = await fetch(`https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages/${messageId}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+          "User-Agent": "DiscordBot (https://discord.js.org, 1.0.0)",
+        },
+      })
 
-    // Birleştirilmiş dosyayı yanıt olarak döndürün
-    return new NextResponse(combinedBlob, {
-      headers: {
-        "Content-Type": originalFileType,
-        "Content-Disposition": `attachment; filename="${originalFileName}"`,
-        "Content-Length": combinedBlob.size.toString(),
-      },
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`Discord API Error: ${response.status} ${response.statusText}`, errorText)
+
+        if (response.status === 404) {
+          throw new Error("Message not found")
+        }
+        if (response.status === 403) {
+          throw new Error("Bot doesn't have permission to access this channel")
+        }
+        if (response.status === 401) {
+          throw new Error("Invalid bot token")
+        }
+        if (response.status === 429) {
+          // Rate limited - throw error to trigger retry
+          throw new Error("Rate limited by Discord API")
+        }
+        throw new Error(`Discord API error: ${response.status} ${response.statusText}`)
+      }
+
+      return response
     })
-  } catch (error: any) {
-    console.error("Dosya indirme hatası:", error)
-    // Hata bir JSON yanıtıysa, onu doğrudan döndürün
-    if (error.message.includes("Discord'a dosya yüklenemedi") || error.message.includes("Discord mesajı alınamadı")) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+
+    const messageData = await discordResponse.json()
+
+    // Check if message has attachments
+    if (!messageData.attachments || messageData.attachments.length === 0) {
+      return NextResponse.json({ error: "Message has no attachments" }, { status: 400, headers })
     }
-    return NextResponse.json({ error: error.message || "Dosya indirilirken bir hata oluştu." }, { status: 500 })
+
+    // Get the first attachment (assuming it contains the file info)
+    const attachment = messageData.attachments[0]
+
+    console.log(`Fetching attachment: ${attachment.filename}`)
+
+    // Fetch the attachment content with retry logic
+    const attachmentResponse = await retryWithDelay(async () => {
+      const response = await fetch(attachment.url, {
+        method: "GET",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      })
+      if (!response.ok) {
+        throw new Error(`Failed to fetch attachment: ${response.status} ${response.statusText}`)
+      }
+      return response
+    })
+
+    let content: string | undefined = undefined
+
+    // Eğer dosya uzantısı .txt ise text olarak oku, değilse hata döndür
+    if (attachment.filename.endsWith(".txt")) {
+      content = await attachmentResponse.text()
+    } else {
+      return NextResponse.json(
+        { error: "Only .txt files are supported in this endpoint." },
+        { status: 400, headers }
+      )
+    }
+
+    return NextResponse.json(
+      {
+        content,
+        filename: attachment.filename,
+        size: attachment.size,
+        messageId: messageId,
+        channelId: DISCORD_CHANNEL_ID,
+      },
+      { headers },
+    )
+  } catch (error) {
+    console.error("Discord API error:", error)
+    const errorMessage = error instanceof Error ? error.message : "Internal server error"
+    return NextResponse.json({ error: errorMessage }, { status: 500, headers })
   }
+}
+
+// OPTIONS method for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    },
+  })
 }
