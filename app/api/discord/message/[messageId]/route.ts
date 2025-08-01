@@ -112,7 +112,17 @@ export async function GET(request: NextRequest, { params }: { params: { messageI
       return response
     })
 
-    const content = await attachmentResponse.text()
+    let content: string | undefined = undefined
+
+    // Eğer dosya uzantısı .txt ise text olarak oku, değilse hata döndür
+    if (attachment.filename.endsWith(".txt")) {
+      content = await attachmentResponse.text()
+    } else {
+      return NextResponse.json(
+        { error: "Only .txt files are supported in this endpoint." },
+        { status: 400, headers }
+      )
+    }
 
     return NextResponse.json(
       {
