@@ -42,6 +42,8 @@ export async function uploadFileToDiscord(
     method: "POST",
     headers: {
       Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+      User-Agent: "DiscordBot (https://discord.js.org, 1.0.0)",
+      // Content-Type header'ı kesinlikle ekleme, FormData otomatik ayarlar
     },
     body: formData,
   })
@@ -69,6 +71,8 @@ export async function getDiscordMessage(
   const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
     headers: {
       Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+      User-Agent: "DiscordBot (https://discord.js.org, 1.0.0)",
+      // Content-Type header'ı GET isteğinde gereksiz
     },
   })
 
