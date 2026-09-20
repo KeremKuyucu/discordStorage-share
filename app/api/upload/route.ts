@@ -20,7 +20,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer())
     const discordMessage = await uploadFileToDiscord(file, file.name)
 
     return NextResponse.json({
@@ -30,8 +29,9 @@ export async function POST(req: NextRequest) {
       fileSize: discordMessage.attachments[0]?.size,
       fileUrl: discordMessage.attachments[0]?.url,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Dosya yüklenirken bir hata oluştu."
     console.error("Dosya yükleme hatası:", error)
-    return NextResponse.json({ error: error.message || "Dosya yüklenirken bir hata oluştu." }, { status: 500 })
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
